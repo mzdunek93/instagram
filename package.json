@@ -1,0 +1,23 @@
+{
+  "name": "instagram",
+  "version": "0.0.1",
+  "description": "",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "prepublish": "npm run build",
+    "build": "tsc",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "Zaiste",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^8.0.53",
+    "prettier": "1.8.2",
+    "typescript": "^2.6.1"
+  },
+  "dependencies": {
+    "axios": "^0.17.1"
+  }
+}
