@@ -13,6 +13,7 @@
 
 import { parse } from 'url';
 import make from 'axios';
+const _ = require('lodash');
 
 type Response = {
   data?: Array<{}>,
@@ -21,6 +22,18 @@ type Response = {
   paging?: { next: string, previous: string },
 } | undefined;
 
+type ParsedPosts = {
+  posts: Array<Post>,
+  cursor: string,
+  hasMore: boolean
+} | undefined
+
+type Post = {
+  id: string,
+  shortcode: string,
+  media: string,
+  description: string
+}
 
 class InstagramGraph {
   queryId: string;
@@ -33,12 +46,8 @@ class InstagramGraph {
 
   async request(path: string, params: {}, method = 'GET'): Promise<Response> {
     try {
-      const response = await make({
-        headers: { 'User-Agent': 'Facebook Graph Client' },
-        method,
-        params: Object.assign({ queryId: this.queryId }, { variables: params }),
-        url: `${this.baseURL}/${path}`
-      })
+      console.log(`${this.baseURL}${path}/?query_id=${this.queryId}&variables=${JSON.stringify(params)}`)
+      const response = await make(`${this.baseURL}${path}/?query_id=${this.queryId}&variables=${JSON.stringify(params)}`)
 
       return response;
     } catch (error) {
@@ -59,23 +68,46 @@ class InstagramGraph {
     }
   }
 
-  async paginate(path: string, params: { q?: string, type?: string, fields?: {}, limit: number }, size: number): Promise<Array<{}>> {
-    let result: Response = await this.get(path, params);
+
+  parsePosts(response: Response) : ParsedPosts {
+    if(!response) return;
+
+    const result = _.get(response.data, 'data.hashtag.edge_hashtag_to_media');
+
+    const posts = result['edges'].map((item : any) => {
+      return {
+        id: _.get(item, 'node.id'),
+        shortcode: _.get(item, 'node.shortcode'),
+        media: _.get(item, 'node.display_url'),
+        description: _.get(item, 'node.edge_media_to_caption.edges[0].node.text')
+      };
+    });
+
+    return {
+      posts,
+      cursor: _.get(result, 'page_info.end_cursor'),
+      hasMore: _.get(result, 'page_info.has_next_page')
+    };
+  }
+
+  async paginate(path: string, params: { tag_name: string, first?: number }, size: number): Promise<Array<{}>> {
     let entities = [];
-    let counter = entities.length;
+    let counter = 0;
+    let hasMore = true;
 
-    const { limit }: { limit: number } = params;
-
-    while (result.next && counter < size) {
-      result = await this.get(result.next.path, { limit });
-      entities.push(...result.data);
+    while (hasMore && counter < size) {
+      let result = this.parsePosts(await this.get(path, params));
+      if(!result) break;
+      entities.push(...result.posts);
+      counter = entities.length;
+      hasMore = result.hasMore;
     }
 
     return entities.slice(0, size);
   }
 
-  async explore({ q }: { q: string }, size: number = 25): Promise<Array<{}>> {
-    return await this.paginate('/graphql/query', { q, limit: 25 }, size);
+  async explore(tag_name: string, size: number = 25): Promise<Array<{}>> {
+    return await this.paginate('graphql/query', { tag_name, first: 25 }, size);
   }
 }
 
