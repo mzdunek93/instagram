@@ -12,11 +12,18 @@
 // limitations under the License.
 
 import { parse } from 'url';
-import make from 'axios';
+import make, { AxiosResponse } from 'axios';
 const _ = require('lodash');
 
+function sleep(ms: number) {
+  return new Promise((resolve) => {
+    // wait 3s before calling fn(par)
+    setTimeout(() => resolve(), ms)
+  })
+}
+
 type Response = {
-  data?: Array<{}>,
+  data?: {},
   next?: { path?: string },
   previous?: { path?: string },
   paging?: { next: string, previous: string },
@@ -35,33 +42,78 @@ type Post = {
   description: string
 }
 
+type User = {
+  user: {
+    id: string
+  },
+}
+
+type DataType = 'user' | 'tag';
+
+const paths = {
+  user: 'data.user.edge_owner_to_timeline_media',
+  tag: 'data.hashtag.edge_hashtag_to_media'
+}
+
+function parseData(type: DataType, response: Response) : ParsedPosts {
+  if(!response) return;
+
+  const result = _.get(response.data, paths[type]);
+
+  const posts = result['edges'].map((postData: any) : Post => ({
+    id: _.get(postData, 'node.id'),
+    shortcode: _.get(postData, 'node.shortcode'),
+    media: _.get(postData, 'node.display_url'),
+    description: _.get(postData, 'node.edge_media_to_caption.edges[0].node.text')
+  }));
+
+  return {
+    posts,
+    cursor: _.get(result, 'page_info.end_cursor'),
+    hasMore: _.get(result, 'page_info.has_next_page')
+  };
+}
+
 class InstagramGraph {
-  queryId: string;
+  userQueryId: string;
+  queryIds: { [type: string]: string };
   baseURL: string;
 
-  constructor(queryId: string, debug: string) {
-    this.queryId = queryId;
-    this.baseURL = `https://www.instagram.com/`;
+  constructor(tagQueryId: string, userQueryId: string) {
+    this.baseURL = `https://www.instagram.com/graphql/query/`;
+
+    this.queryIds = {
+      user: userQueryId,
+      tag: tagQueryId,
+    }
   }
 
-  async request(path: string, params: {}, method = 'GET'): Promise<Response> {
-    try {
-      console.log(`${this.baseURL}${path}/?query_id=${this.queryId}&variables=${JSON.stringify(params)}`)
-      const response = await make(`${this.baseURL}${path}/?query_id=${this.queryId}&variables=${JSON.stringify(params)}`)
+  async request(query_id: string, params: {}, method = 'GET'): Promise<Response> {
+    let retries = 0;
+    while(retries < 3) {
+      try {
+        const response = await make(`${this.baseURL}?query_id=${query_id}&variables=${JSON.stringify(params)}`)
 
-      return response;
-    } catch (error) {
-      if(error.response) {
-        console.log(error.response.statusText);
-        console.log(`  ${error.response.headers['www-authenticate']}`);
+        return response;
+      } catch (error) {
+        if(error.response) {
+          console.log(error.response.statusText);
+          console.log(error.response.data.message);
+          console.log('message: ', error.response.data.errors[0].message);
+        }
+        console.log(`  ${error.message}`);
+        if(retries < 3) {
+          ++retries;
+          console.log('retrying', retries * 50, 's');
+          await sleep(retries * 50000);
+        }
       }
-      console.log(`  ${error.message}`);
     }
   }
 
 
-  async get(requestPath: string, params: {}): Promise<Response> {
-    const response = await this.request(requestPath, params);
+  async get(type: DataType, params: {}): Promise<Response> {
+    const response = await this.request(this.queryIds[type], params);
 
     if (response) {
       let result: Response = response;
@@ -70,29 +122,12 @@ class InstagramGraph {
     }
   }
 
-
-  parsePosts(response: Response) : ParsedPosts {
-    if(!response) return;
-
-    const result = _.get(response.data, 'data.hashtag.edge_hashtag_to_media');
-
-    const posts = result['edges'].map((item : any) => {
-      return {
-        id: _.get(item, 'node.id'),
-        shortcode: _.get(item, 'node.shortcode'),
-        media: _.get(item, 'node.display_url'),
-        description: _.get(item, 'node.edge_media_to_caption.edges[0].node.text')
-      };
-    });
-
-    return {
-      posts,
-      cursor: _.get(result, 'page_info.end_cursor'),
-      hasMore: _.get(result, 'page_info.has_next_page')
-    };
-  }
-
-  async paginate(path: string, params: { tag_name: string, first?: number }, size: number): Promise<Array<{}>> {
+  async paginate(type: DataType, params: { 
+      id?: string, 
+      tag_name?: string, 
+      first?: number, 
+      after?: string 
+    }, size: number): Promise<Array<{}>> {
     let entities = [];
     let counter = 0;
     let hasMore = true;
@@ -100,9 +135,10 @@ class InstagramGraph {
     while (hasMore && counter < size) {
       let result;
       try {
-        result = this.parsePosts(await this.get(path, params));
+        result = parseData(type, await this.get(type, params));
       } catch(e) {
-        console.log(`error when getting posts for ${params.tag_name}`)
+        console.log(`error when getting media`);
+        console.log(`params ${JSON.stringify(params)}`);
         console.log(e.message);
         break;
       }
@@ -110,13 +146,21 @@ class InstagramGraph {
       entities.push(...result.posts);
       counter = entities.length;
       hasMore = result.hasMore;
+      params.after = result.cursor;
+      console.log(counter)
     }
 
     return entities.slice(0, size);
   }
 
-  async explore(tag_name: string, size: number = 25): Promise<Array<{}>> {
-    return await this.paginate('graphql/query', { tag_name, first: 25 }, size);
+  async getTag(tag_name: string, size: number = 25): Promise<Array<{}>> {
+    return await this.paginate('tag', { tag_name, first: 400 }, size);
+  }
+
+  async getUser(name: string, size: number = 25): Promise<Array<{}>> {
+    const data = <AxiosResponse<User>> await make(`https://www.instagram.com/${name}/?__a=1`);
+    const id = data.data.user.id;
+    return await this.paginate('user', { id, first: 400 }, size);
   }
 }
 
