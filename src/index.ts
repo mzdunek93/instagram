@@ -98,9 +98,13 @@ class InstagramGraph {
     while (hasMore && counter < size) {
       let result = this.parsePosts(await this.get(path, params));
       if(!result) break;
-      entities.push(...result.posts);
-      counter = entities.length;
-      hasMore = result.hasMore;
+      try {
+        entities.push(...result.posts);
+        counter = entities.length;
+        hasMore = result.hasMore;
+      } catch(e) {
+        break;
+      }
     }
 
     return entities.slice(0, size);
