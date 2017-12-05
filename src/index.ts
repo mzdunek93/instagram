@@ -51,9 +51,11 @@ class InstagramGraph {
 
       return response;
     } catch (error) {
-      console.log(error.response.statusText);
+      if(error.response) {
+        console.log(error.response.statusText);
+        console.log(`  ${error.response.headers['www-authenticate']}`);
+      }
       console.log(`  ${error.message}`);
-      console.log(`  ${error.response.headers['www-authenticate']}`);
     }
   }
 
@@ -103,6 +105,8 @@ class InstagramGraph {
         counter = entities.length;
         hasMore = result.hasMore;
       } catch(e) {
+        console.log(`error when harvesting ${params.tag_name}`)
+        console.log(e.message);
         break;
       }
     }
