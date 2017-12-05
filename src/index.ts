@@ -98,17 +98,18 @@ class InstagramGraph {
     let hasMore = true;
 
     while (hasMore && counter < size) {
-      let result = this.parsePosts(await this.get(path, params));
-      if(!result) break;
+      let result;
       try {
-        entities.push(...result.posts);
-        counter = entities.length;
-        hasMore = result.hasMore;
+        result = this.parsePosts(await this.get(path, params));
       } catch(e) {
-        console.log(`error when harvesting ${params.tag_name}`)
+        console.log(`error when getting posts for ${params.tag_name}`)
         console.log(e.message);
         break;
       }
+      if(!result) break;
+      entities.push(...result.posts);
+      counter = entities.length;
+      hasMore = result.hasMore;
     }
 
     return entities.slice(0, size);
